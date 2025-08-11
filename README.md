@@ -22,7 +22,7 @@
 ## 🚀 Запуск
 
 ```bash
-git clone https://github.com/spider-osint/spider
+git clone https://github.com/Trytonottry/spider-osint
 cd spider
 cp .env.example .env
 # Настройте .env (API-ключи, Telegram и т.д.)
