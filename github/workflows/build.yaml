@@ -1,0 +1,157 @@
+name: 🐞 SPIDER CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # 1. Установка, тесты, линтинг
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:15
+        env:
+          POSTGRES_DB: spider_test
+          POSTGRES_USER: spider
+          POSTGRES_PASSWORD: spiderpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U spider"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 🛎️ Checkout code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🔧 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          python -m spacy download ru_core_news_sm
+
+      - name: 🧪 Run tests
+        env:
+          DATABASE_URL: postgresql://spider:spiderpass@localhost:5432/spider_test
+        run: |
+          pytest tests/ --cov=backend --cov-report=xml
+
+      - name: 🧹 Lint with flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+      - name: 🧠 Type check with mypy
+        run: mypy --ignore-missing-imports backend/ api/ modules/ core/
+
+      - name: 🔒 Scan for security issues with bandit
+        run: bandit -r backend/ -f json -o bandit-report.json || echo "Security scan completed"
+        continue-on-error: true
+
+      - name: 📊 Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+
+  # 2. Сборка Docker-образов
+  build-docker:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (contains(github.ref, 'main') || startsWith(github.ref, 'refs/tags/v'))
+
+    steps:
+      - name: 🛎️ Checkout code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🐳 Login to Docker Hub
+        if: secrets.DOCKERHUB_USERNAME && secrets.DOCKERHUB_TOKEN
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 🔧 Build and Push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/spider-backend:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/spider-backend:${{ github.sha }}
+
+      - name: 🔧 Build and Push Web
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: web/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/spider-web:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/spider-web:${{ github.sha }}
+
+      - name: 🔧 Build and Push Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: workers/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/spider-worker:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/spider-worker:${{ github.sha }}
+
+  # 3. Создание релиза (при теге)
+  release:
+    needs: build-docker
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: 📦 Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref }}
+          name: Release ${{ github.ref }}
+          bodyFile: docs/CHANGELOG.md
+          draft: false
+          generateReleaseNotes: true
+
+  # 4. Уведомление (опционально)
+  notify:
+    needs: release
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: 📢 Notify on Slack (optional)
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"✅ SPIDER Release ${{ github.ref }} deployed!"}' \
+            $SLACK_WEBHOOK
+        if: ${{ secrets.SLACK_WEBHOOK }}

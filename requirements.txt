@@ -1,0 +1,37 @@
+# Core
+python>=3.11
+aiohttp
+requests
+beautifulsoup4
+lxml
+
+# AI
+transformers
+torch
+spacy
+deepface
+opencv-python
+Pillow
+
+# NLP
+ru_core_news_sm @ https://github.com/explosion/spacy-models/releases/download/ru_core_news_sm-3.7.0/ru_core_news_sm-3.7.0.tar.gz
+
+# Web & Scraping
+selenium
+playwright
+
+# Reports
+weasyprint
+jinja2
+reportlab
+
+# DB
+sqlalchemy
+neo4j
+
+# API
+fastapi
+uvicorn[standard]
+
+# Utils
+python-dotenv

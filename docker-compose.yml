@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://spider:spiderpass@db:5432/spider
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - ./backend/reports:/app/reports
+      - ./backend/logs:/app/logs
+    depends_on:
+      - db
+      - redis
+
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  celery-worker:
+    build: ./backend
+    command: celery -A workers.worker worker -l info
+    depends_on:
+      - redis
+      - db
+
+  telegram-bot:
+    build: ./backend
+    command: python -c "from workers.telegram_bot import start_bot; start_bot()"
+    depends_on:
+      - celery-worker
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: spider
+      POSTGRES_USER: spider
+      POSTGRES_PASSWORD: spiderpass
+    volumes:
+      - postgres_/var/lib/postgresql/data
+      - ./backup:/backups
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+
+  backup:
+    image: postgres:15
+    volumes:
+      - ./backup:/backups
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      PGPASSWORD: spiderpass
+    command: >
+      sh -c "
+      apt-get update && apt-get install -y docker.io &&
+      echo '0 2 * * * /backups/backup.sh' > /tmp/crontab &&
+      crontab /tmp/crontab &&
+      crond -f
+      "
+
+volumes:
+  postgres_data:

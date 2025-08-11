@@ -1,0 +1,162 @@
+name: 🛠️ SPIDER Desktop & Mobile Builds
+
+on:
+  push:
+    tags:
+      - 'v*'  # Только при релизах
+
+jobs:
+  # 1. Сборка CLI в .exe (Windows)
+  build-exe:
+    name: 🖥️ Build spider.exe
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🔧 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: 📦 Build EXE
+        run: |
+          pyinstaller ^
+            --onefile ^
+            --name spider ^
+            --icon=assets/icon.ico ^
+            --add-data "core;core" ^
+            --add-data "modules;modules" ^
+            --add-data "ai;ai" ^
+            --add-data "utils;utils" ^
+            --add-data "db;db" ^
+            spider.py
+
+      - name: 📤 Upload .exe
+        uses: actions/upload-artifact@v3
+        with:
+          name: spider-windows
+          path: dist/spider.exe
+
+  # 2. Сборка CLI в .AppImage (Linux)
+  build-appimage:
+    name: 🐧 Build spider.AppImage
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🔧 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: 📦 Build Binary
+        run: |
+          pyinstaller \
+            --onefile \
+            --name spider \
+            --add-data "core:core" \
+            --add-data "modules:modules" \
+            --add-data "ai:ai" \
+            --add-data "utils:utils" \
+            --add-data "db:db" \
+            spider.py
+
+      - name: 🧩 Install AppImageKit
+        run: |
+          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          sudo mv appimagetool-x86_64.AppImage /usr/local/bin/appimagetool
+
+      - name: 📦 Create AppImage
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp dist/spider AppDir/usr/bin/
+          cp assets/icon.png AppDir/
+          echo "[Desktop Entry]" > AppDir/spider.desktop
+          echo "Name=SPIDER" >> AppDir/spider.desktop
+          echo "Exec=spider" >> AppDir/spider.desktop
+          echo "Icon=icon" >> AppDir/spider.desktop
+          echo "Type=Application" >> AppDir/spider.desktop
+          echo "Categories=Utility;" >> AppDir/spider.desktop
+          appimagetool AppDir spider.AppImage
+
+      - name: 📤 Upload AppImage
+        uses: actions/upload-artifact@v3
+        with:
+          name: spider-linux
+          path: spider.AppImage
+
+  # 3. Сборка APK (Android)
+  build-apk:
+    name: 📱 Build spider-mobile.apk
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: 🔧 Install dependencies
+        working-directory: mobile
+        run: npm install
+
+      - name: 🐑 Install Android SDK
+        uses: actions/setup-android@v3
+
+      - name: 📦 Build APK
+        working-directory: mobile
+        run: |
+          npx react-native build-android --mode=release
+
+      - name: 📤 Upload APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: spider-android
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+
+  # 4. Создание GitHub Release
+  release:
+    name: 📦 Create Release
+    needs: [build-exe, build-appimage, build-apk]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Artifacts
+        uses: actions/download-artifact@v3
+
+      - name: 📦 Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref }}
+          name: "SPIDER v${{ split(github.ref, '/')[2] }}"
+          bodyFile: docs/CHANGELOG.md
+          artifacts: "artifact/**"
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
